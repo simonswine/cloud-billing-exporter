@@ -25,6 +25,7 @@ all: test build
 
 test:
 	go test
+	go test ./gcp
 
 build: version
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \

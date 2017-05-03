@@ -1,0 +1,4 @@
+apiVersion: v1
+description: Cloud billing exporter for prometheus
+name: cloud-billing-exporter
+version: 0.1.0
