@@ -13,9 +13,9 @@ WORKDIR /home/app
 
 EXPOSE 9660
 
-COPY _build/gcp-billing-exporter-linux-amd64 /gcp-billing-exporter
-ENTRYPOINT ["/gcp-billing-exporter"]
+COPY _build/cloud-billing-exporter-linux-amd64 /cloud-billing-exporter
+ENTRYPOINT ["/cloud-billing-exporter"]
 ARG VCS_REF
 LABEL org.label-schema.vcs-ref=$VCS_REF \
-      org.label-schema.vcs-url="https://github.com/simonswine/gcp-billing-exporter" \
+      org.label-schema.vcs-url="https://github.com/jetstack-experimental/cloud-billing-exporter" \
       org.label-schema.license="Apache-2.0"

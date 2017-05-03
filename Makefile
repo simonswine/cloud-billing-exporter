@@ -1,5 +1,5 @@
 ACCOUNT=simonswine
-APP_NAME=gcp-billing-exporter
+APP_NAME=cloud-billing-exporter
 
 PACKAGE_NAME=github.com/${ACCOUNT}/${APP_NAME}
 GO_VERSION=1.8

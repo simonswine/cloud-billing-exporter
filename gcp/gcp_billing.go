@@ -1,5 +1,4 @@
-// Sample storage-quickstart creates a Google Cloud Storage bucket.
-package main
+package gcp
 
 import (
 	"encoding/json"
@@ -64,19 +63,14 @@ type GCPBilling struct {
 	Reports            [ReportsPerMonth]gcpBillingReport
 	ReportsMonthPrefix string
 
-	metricMonthlyCosts *prometheus.GaugeVec
+	MetricMonthlyCosts *prometheus.CounterVec
+	metricValues       map[string]float64
 }
 
 func NewGCPBilling() *GCPBilling {
 	g := &GCPBilling{
-		time: realClock{},
-		metricMonthlyCosts: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Name: prometheus.BuildFQName(Namespace, "billing", "monthly_costs"),
-				Help: "Billed costs per calendar month.",
-			},
-			[]string{"cloud", "currency", "account", "service"},
-		),
+		time:         realClock{},
+		metricValues: map[string]float64{},
 	}
 	return g
 }
@@ -156,16 +150,17 @@ func reduceElementsByFunc(elementsIn []*gcpBillingElement, fnKey func(*gcpBillin
 	return elementsOut
 }
 
+func groupByProjectIDServiceCurrency(e *gcpBillingElement) string {
+	return fmt.Sprintf(
+		"%s-%s-%s",
+		e.ProjectID,
+		e.GetServiceName(),
+		e.Cost.Currency,
+	)
+}
+
 func reduceElementsByProjectIDServiceCurrency(elementsIn []*gcpBillingElement) []*gcpBillingElement {
-	groupBy := func(e *gcpBillingElement) string {
-		return fmt.Sprintf(
-			"%s-%s-%s",
-			e.ProjectID,
-			e.GetServiceName(),
-			e.Cost.Currency,
-		)
-	}
-	return reduceElementsByFunc(elementsIn, groupBy)
+	return reduceElementsByFunc(elementsIn, groupByProjectIDServiceCurrency)
 }
 
 func (g *GCPBilling) getReportFile(ctx context.Context, bucket *storage.BucketHandle, objectAttrs *storage.ObjectAttrs) {
@@ -235,9 +230,11 @@ func (g *GCPBilling) GetReports(ctx context.Context) error {
 	var bucketAttrs *storage.ObjectAttrs
 	var prefix string
 	for _, prefix = range g.filterLastTwoMonths() {
+		log.Warnf("looking for reports in bucket '%s' with prefix '%s'", g.BucketName, prefix)
 		it = bucket.Objects(ctx, &storage.Query{Prefix: prefix})
 		bucketAttrs, err = it.Next()
 		if err == iterator.Done {
+			bucketAttrs = nil
 			continue
 		}
 		if err != nil {
@@ -246,14 +243,10 @@ func (g *GCPBilling) GetReports(ctx context.Context) error {
 		break
 	}
 
-	if it.PageInfo().Remaining() == 0 {
+	if bucketAttrs == nil {
 		log.Warnf("No reports of this or last month found in bucket '%s' with prefix '%s'", g.BucketName, g.ReportPrefix)
 		return nil
 	}
-
-	// lock from here on
-	g.ReportsLock.Lock()
-	defer g.ReportsLock.Unlock()
 
 	if g.ReportsMonthPrefix != prefix {
 		log.Debugf("reports prefix changed -> clear cache (old: %s, new: %s)", g.ReportsMonthPrefix, prefix)
@@ -292,6 +285,10 @@ func (g *GCPBilling) GetReports(ctx context.Context) error {
 func (g *GCPBilling) Query() error {
 	ctx := context.Background()
 
+	// lock from here on
+	g.ReportsLock.Lock()
+	defer g.ReportsLock.Unlock()
+
 	// update from GCS buckets
 	err := g.GetReports(ctx)
 	if err != nil {
@@ -309,12 +306,19 @@ func (g *GCPBilling) Query() error {
 
 	// write them into the metrics
 	for _, elem := range elems {
-		g.metricMonthlyCosts.WithLabelValues(
+		m := g.MetricMonthlyCosts.WithLabelValues(
 			"gcp",
 			elem.Cost.Currency,
 			elem.ProjectID,
 			elem.GetServiceName(),
-		).Set(elem.Cost.Value)
+		)
+		key := groupByProjectIDServiceCurrency(elem)
+		if _, ok := g.metricValues[key]; !ok {
+			g.metricValues[groupByProjectIDServiceCurrency(elem)] = 0
+		}
+		value := elem.GetValue()
+		m.Add(value - g.metricValues[key])
+		g.metricValues[key] = value
 	}
 
 	return nil

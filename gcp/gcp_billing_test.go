@@ -1,5 +1,4 @@
-// Sample storage-quickstart creates a Google Cloud Storage bucket.
-package main
+package gcp
 
 import (
 	"reflect"
@@ -20,6 +19,7 @@ func Test_FilterLastTwoMonths(t *testing.T) {
 		"2017-01-02",
 		"2016-12-02",
 		"2016-07-02",
+		"2017-05-03",
 	}
 
 	outputs := [][]string{
@@ -34,6 +34,10 @@ func Test_FilterLastTwoMonths(t *testing.T) {
 		[]string{
 			"prefix-2016-07-",
 			"prefix-2016-06-",
+		},
+		[]string{
+			"prefix-2017-05-",
+			"prefix-2017-04-",
 		},
 	}
 
