@@ -67,12 +67,14 @@ type GCPBilling struct {
 	metricValues       map[string]float64
 }
 
-func NewGCPBilling() *GCPBilling {
-	g := &GCPBilling{
-		time:         realClock{},
-		metricValues: map[string]float64{},
+func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix string) *GCPBilling {
+	return &GCPBilling{
+		MetricMonthlyCosts: metric,
+		BucketName:         bucketName,
+		ReportPrefix:       reportPrefix,
+		time:               realClock{},
+		metricValues:       map[string]float64{},
 	}
-	return g
 }
 
 func (g *GCPBilling) filterLastTwoMonths() []string {
@@ -230,7 +232,7 @@ func (g *GCPBilling) GetReports(ctx context.Context) error {
 	var bucketAttrs *storage.ObjectAttrs
 	var prefix string
 	for _, prefix = range g.filterLastTwoMonths() {
-		log.Warnf("looking for reports in bucket '%s' with prefix '%s'", g.BucketName, prefix)
+		log.Debugf("looking for reports in bucket '%s' with prefix '%s'", g.BucketName, prefix)
 		it = bucket.Objects(ctx, &storage.Query{Prefix: prefix})
 		bucketAttrs, err = it.Next()
 		if err == iterator.Done {
@@ -282,6 +284,10 @@ func (g *GCPBilling) GetReports(ctx context.Context) error {
 	return nil
 }
 
+func (g *GCPBilling) Test() error {
+	return g.Query()
+}
+
 func (g *GCPBilling) Query() error {
 	ctx := context.Background()
 
@@ -322,4 +328,8 @@ func (g *GCPBilling) Query() error {
 	}
 
 	return nil
+}
+
+func (g *GCPBilling) String() string {
+	return fmt.Sprintf("GCP Billing in bucket '%s'", g.BucketName)
 }

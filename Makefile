@@ -24,8 +24,7 @@ PACKAGES=$(shell find . -name "*_test.go" | xargs -n1 dirname | grep -v 'vendor/
 all: test build
 
 test:
-	go test
-	go test ./gcp
+	go test $$(go list ./... | grep -v '/vendor/')
 
 build: version
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
