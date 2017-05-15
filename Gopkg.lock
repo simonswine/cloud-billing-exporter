@@ -1,4 +1,4 @@
-memo = "c0fd95c1e78f31499a72c29f9ef0a520d6163805eac4d54b6797c023151c11a1"
+memo = "0d049829e065a8a22a15cf66d69b165845013f13a6e7e35c5b8f94cdb4d83a44"
 
 [[projects]]
   name = "cloud.google.com/go"
@@ -12,10 +12,22 @@ memo = "c0fd95c1e78f31499a72c29f9ef0a520d6163805eac4d54b6797c023151c11a1"
   version = "v0.11.5"
 
 [[projects]]
+  name = "github.com/aws/aws-sdk-go"
+  packages = ["aws","aws/awserr","aws/awsutil","aws/client","aws/client/metadata","aws/corehandlers","aws/credentials","aws/credentials/ec2rolecreds","aws/credentials/endpointcreds","aws/credentials/stscreds","aws/defaults","aws/ec2metadata","aws/endpoints","aws/request","aws/session","aws/signer/v4","private/protocol","private/protocol/query","private/protocol/query/queryutil","private/protocol/rest","private/protocol/restxml","private/protocol/xml/xmlutil","service/s3","service/sts"]
+  revision = "cea091b5b8fe6fcecf0eb6ec8f1a2570ff4ee6a7"
+  version = "v1.8.22"
+
+[[projects]]
   branch = "master"
   name = "github.com/beorn7/perks"
   packages = ["quantile"]
   revision = "4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9"
+
+[[projects]]
+  name = "github.com/go-ini/ini"
+  packages = ["."]
+  revision = "e7fea39b01aea8d5671f6858f0532f56e8bff3a5"
+  version = "v1.27.0"
 
 [[projects]]
   branch = "master"
@@ -28,6 +40,12 @@ memo = "c0fd95c1e78f31499a72c29f9ef0a520d6163805eac4d54b6797c023151c11a1"
   name = "github.com/googleapis/gax-go"
   packages = ["."]
   revision = "9af46dd5a1713e8b5cd71106287eba3cefdde50b"
+
+[[projects]]
+  name = "github.com/jmespath/go-jmespath"
+  packages = ["."]
+  revision = "3433f3ea46d9f8019119e7dd41274e112a2359a9"
+  version = "0.2.2"
 
 [[projects]]
   name = "github.com/matttproud/golang_protobuf_extensions"
