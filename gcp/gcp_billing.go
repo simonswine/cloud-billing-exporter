@@ -323,7 +323,12 @@ func (g *GCPBilling) Query() error {
 			g.metricValues[groupByProjectIDServiceCurrency(elem)] = 0
 		}
 		value := elem.GetValue()
-		m.Add(value - g.metricValues[key])
+		delta := value - g.metricValues[key]
+		if delta < 0 {
+			log.With("project", elem.ProjectID).With("service_name", elem.GetServiceName()).Warnf("costs are falling by: '%f'", delta)
+			continue
+		}
+		m.Add(delta)
 		g.metricValues[key] = value
 	}
 

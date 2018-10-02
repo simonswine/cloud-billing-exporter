@@ -1,4 +1,4 @@
-FROM alpine:3.5
+FROM alpine:3.7
 
 # install ca certificates for comms with Let's Encrypt
 RUN apk --update add ca-certificates && rm -rf /var/cache/apk/*
