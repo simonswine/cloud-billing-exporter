@@ -155,7 +155,7 @@ func (b BillingCollector) Collect(ch chan<- prometheus.Metric) {
 			defer wg.Done()
 			err := c.Query()
 			if err != nil {
-				log.Warn("Error querying collector (%s): ", c.String(), err)
+				log.Warnf("Error querying collector (%s): %s", c.String(), err)
 			}
 		}(c)
 	}

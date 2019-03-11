@@ -23,19 +23,19 @@ func Test_FilterLastTwoMonths(t *testing.T) {
 	}
 
 	outputs := [][]string{
-		[]string{
+		{
 			"prefix-2017-01-",
 			"prefix-2016-12-",
 		},
-		[]string{
+		{
 			"prefix-2016-12-",
 			"prefix-2016-11-",
 		},
-		[]string{
+		{
 			"prefix-2016-07-",
 			"prefix-2016-06-",
 		},
-		[]string{
+		{
 			"prefix-2017-05-",
 			"prefix-2017-04-",
 		},
@@ -47,7 +47,7 @@ func Test_FilterLastTwoMonths(t *testing.T) {
 		ReportPrefix: "prefix",
 	}
 
-	for i, _ := range inputs {
+	for i := range inputs {
 
 		now, err := time.Parse(DateFormat, inputs[i])
 		if err != nil {

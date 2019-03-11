@@ -168,13 +168,13 @@ func reduceElementsByProjectIDServiceCurrency(elementsIn []*gcpBillingElement) [
 func (g *GCPBilling) getReportFile(ctx context.Context, bucket *storage.BucketHandle, objectAttrs *storage.ObjectAttrs) {
 	lengthName := len(objectAttrs.Name)
 	if lengthName < 8 {
-		log.Warnf("invalid report filename: ", objectAttrs.Name)
+		log.Warnf("invalid report filename: %s", objectAttrs.Name)
 		return
 	}
 
 	i, err := strconv.Atoi(objectAttrs.Name[lengthName-7 : lengthName-5])
 	if err != nil {
-		log.Warnf("invalid report filename: ", objectAttrs.Name, err)
+		log.Warnf("invalid report filename '%s': %s", objectAttrs.Name, err)
 		return
 	}
 	i = i - 1
