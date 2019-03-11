@@ -2,7 +2,7 @@ ACCOUNT=simonswine
 APP_NAME=cloud-billing-exporter
 
 PACKAGE_NAME=github.com/${ACCOUNT}/${APP_NAME}
-GO_VERSION=1.8
+GO_VERSION=1.11.5
 
 GOOS := linux
 GOARCH := amd64
@@ -26,20 +26,14 @@ all: test build
 test:
 	go test $$(go list ./... | grep -v '/vendor/')
 
-build: version
+build:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-a -tags netgo \
 		-o ${BUILD_DIR}/${APP_NAME}-$(GOOS)-$(GOARCH) \
-		-ldflags "-X '${PACKAGE_NAME}/vendor/github.com/prometheus/common/version.Version=$(APP_VERSION)' -X '${PACKAGE_NAME}/vendor/github.com/prometheus/common/version.Revision=$(GIT_COMMIT)' -X '${PACKAGE_NAME}/vendor/github.com/prometheus/common/version.Branch=$(GIT_BRANCH)' -X '${PACKAGE_NAME}/vendor/github.com/prometheus/common/version.BuildUser=$(shell id -u -n)@$(shell hostname)' -X '${PACKAGE_NAME}/vendor/github.com/prometheus/common/version.BuildDate=$(shell date --rfc-3339=seconds)'"
-
-version:
-	$(eval GIT_STATE := $(shell if test -z "`git status --porcelain 2> /dev/null`"; then echo "clean"; else echo "dirty"; fi))
-	$(eval GIT_COMMIT := $(shell git rev-parse HEAD))
-	$(eval GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD))
-	$(eval APP_VERSION ?= $(shell cat VERSION))
+		-ldflags "$(shell hack/version-ld-flags.sh)"
 
 image:
-	docker build --build-arg VCS_REF=$(GIT_COMMIT) -t $(DOCKER_IMAGE):$(BUILD_TAG) .
+	docker build --build-arg VCS_REF=$(shell git rev-parse HEAD) -t $(DOCKER_IMAGE):$(BUILD_TAG) .
 	
 push: image
 	set -e; \
