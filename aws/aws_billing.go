@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/organizations"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/prometheus/client_golang/prometheus"
@@ -21,6 +22,13 @@ type Clock interface {
 	Now() time.Time
 }
 
+type realClock struct {
+}
+
+func (r *realClock) Now() time.Time {
+	return time.Now()
+}
+
 type awsBillingElement struct {
 	ProjectName string
 	ProjectID   string
@@ -29,12 +37,23 @@ type awsBillingElement struct {
 	Currency    string
 }
 
+type AccountName string
+type AccountID string
+
 type AWSBilling struct {
 	time Clock
 
 	BucketName string
 	Region     string
-	AccountMap map[string]string
+
+	// accountNameByIDOverride contains account name mappings specified
+	// manually through CLI arguments (take precedence)
+	accountNameByIDOverride map[AccountID]AccountName
+
+	// accountNameByIDCachedAPI contains account name mappings specified
+	accountNameByIDAPI           map[AccountID]AccountName
+	accountNameByIDAPILastUpdate time.Time
+	accountNameByIDAPILock       sync.Mutex
 
 	rootAccountID string
 
@@ -128,26 +147,77 @@ func groupByProjectIDServiceCurrency(e *awsBillingElement) string {
 }
 
 func NewAWSBilling(metric *prometheus.CounterVec, bucketName, region, rootAccountID, accountMapString string) *AWSBilling {
-	accountMap := map[string]string{}
+	accountMap := map[AccountID]AccountName{}
 	accountMapParts := strings.Split(accountMapString, ",")
 	for _, mapping := range accountMapParts {
 		mappingParts := strings.Split(mapping, "=")
 		if len(mappingParts) != 2 {
 			continue
 		}
-		accountMap[mappingParts[0]] = mappingParts[1]
+		accountMap[AccountID(mappingParts[0])] = AccountName(mappingParts[1])
 	}
 
 	log.Infof("%+#v from '%s'", accountMap, accountMapString)
 
 	return &AWSBilling{
-		MetricMonthlyCosts: metric,
-		BucketName:         bucketName,
-		Region:             region,
-		rootAccountID:      rootAccountID,
-		metricValues:       map[string]float64{},
-		AccountMap:         accountMap,
+		MetricMonthlyCosts:      metric,
+		BucketName:              bucketName,
+		Region:                  region,
+		rootAccountID:           rootAccountID,
+		metricValues:            map[string]float64{},
+		accountNameByIDOverride: accountMap,
+		time:                    &realClock{},
 	}
+}
+
+func (a *AWSBilling) getAccountNameByIDAPI() (map[AccountID]AccountName, error) {
+	svc := organizations.New(a.awsSession(), a.awsConfig())
+
+	accountMap := map[AccountID]AccountName{}
+
+	input := &organizations.ListAccountsInput{}
+	for {
+		resp, err := svc.ListAccounts(input)
+		if err != nil {
+			return nil, err
+		}
+		for _, account := range resp.Accounts {
+			accountMap[AccountID(*account.Id)] = AccountName(*account.Name)
+		}
+		if resp.NextToken == nil || *resp.NextToken == "" {
+			break
+		}
+		input.NextToken = resp.NextToken
+	}
+
+	log.Infof("%+#v from AWS api", accountMap)
+
+	return accountMap, nil
+}
+
+func (a *AWSBilling) AccountNameByID(id AccountID) AccountName {
+
+	// see if an override has been defined
+	if val, ok := a.accountNameByIDOverride[id]; ok {
+		return val
+	}
+
+	// update cache of API based mapping
+	if a.accountNameByIDAPI == nil || a.time.Now().Add(-time.Hour).After(a.accountNameByIDAPILastUpdate) {
+		if m, err := a.getAccountNameByIDAPI(); err != nil {
+			log.Warnf("couldn't retrieve list of accounts: %s", err)
+		} else {
+			a.accountNameByIDAPI = m
+			a.accountNameByIDAPILastUpdate = a.time.Now()
+		}
+	}
+
+	// check if we have an API based account name
+	if val, ok := a.accountNameByIDAPI[id]; ok {
+		return val
+	}
+
+	return AccountName(fmt.Sprintf("unknown-%s", id))
 }
 
 func (a *AWSBilling) RootAccountID() string {
@@ -232,10 +302,8 @@ func (a *AWSBilling) Query() error {
 
 	for _, elem := range billingElements {
 		projectID := elem.ProjectID
-		if val, ok := a.AccountMap[projectID]; ok {
-			projectID = val
-			elem.ProjectName = val
-		}
+		projectID = string(a.AccountNameByID(AccountID(projectID)))
+		elem.ProjectName = projectID
 
 		m := a.MetricMonthlyCosts.WithLabelValues(
 			"aws",
