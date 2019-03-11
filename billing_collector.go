@@ -12,8 +12,8 @@ import (
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/version"
 
-	"github.com/jetstack-experimental/cloud-billing-exporter/aws"
-	"github.com/jetstack-experimental/cloud-billing-exporter/gcp"
+	"github.com/simonswine/cloud-billing-exporter/aws"
+	"github.com/simonswine/cloud-billing-exporter/gcp"
 )
 
 const AppName = "cloud_billing_exporter"
