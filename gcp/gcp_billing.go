@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
@@ -63,17 +64,28 @@ type GCPBilling struct {
 	Reports            [ReportsPerMonth]gcpBillingReport
 	ReportsMonthPrefix string
 
+	BigQueryProjectID string
+
 	MetricMonthlyCosts *prometheus.CounterVec
 	metricValues       map[string]float64
 	resourcesMetadata  *resourcesMetadata
 }
 
-func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix, ownerLabel string) *GCPBilling {
+func NewGCPBillingBucket(metric *prometheus.CounterVec, bucketName, reportPrefix, ownerLabel string) *GCPBilling {
 	return &GCPBilling{
 		MetricMonthlyCosts: metric,
 		BucketName:         bucketName,
 		ReportPrefix:       reportPrefix,
 		resourcesMetadata:  newResourcesMetadata().WithOwnerLabel(ownerLabel),
+		clock:              realClock{},
+		metricValues:       map[string]float64{},
+	}
+}
+
+func NewGCPBillingBigQuery(metric *prometheus.CounterVec, bigQueryProjectID string) *GCPBilling {
+	return &GCPBilling{
+		MetricMonthlyCosts: metric,
+		BigQueryProjectID:  bigQueryProjectID,
 		clock:              realClock{},
 		metricValues:       map[string]float64{},
 	}
@@ -291,6 +303,47 @@ func (g *GCPBilling) Test() error {
 }
 
 func (g *GCPBilling) Query() error {
+
+	g.BigQueryProjectID = "jetstack-gke"
+	ctx := context.Background()
+	client, err := bigquery.NewClient(ctx, g.BigQueryProjectID)
+	if err != nil {
+		return err
+	}
+
+	q := client.Query(`
+SELECT
+  project.id,
+  invoice.month,
+  currency,
+  service.description,
+  SUM(cost) as cost
+FROM ` + "`jetstack-gke.jetstack_billing.gcp_billing_export_v1_00C1A5_231D52_42D4E3`" + `
+GROUP BY project.id, invoice.month, currency, service.description
+ORDER BY cost DESC
+;
+`)
+	it, err := q.Read(ctx)
+	if err != nil {
+		return err
+	}
+
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Println(values)
+	}
+
+	return nil
+}
+
+func (g *GCPBilling) OldQuery() error {
 	ctx := context.Background()
 
 	// lock from here on
