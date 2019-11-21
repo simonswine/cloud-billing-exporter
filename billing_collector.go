@@ -41,6 +41,7 @@ type BillingCollector struct {
 	ShowVersion   *bool
 	ListenAddress *string
 	MetricsPath   *string
+	LogLevel      *string
 
 	collectors         []cloudBillingCollector
 	metricMonthlyCosts *prometheus.CounterVec
@@ -59,6 +60,7 @@ func (b *BillingCollector) parseFlags() {
 	b.AWSOwnerTag = flag.String("aws-billing.owner-tag", "owner", "Tag on AWS Projects to set owner.")
 
 	b.ShowVersion = flag.Bool("version", false, "Print version information.")
+	b.LogLevel = flag.String("log-level", "info", "Set log level.")
 	b.ListenAddress = flag.String("web.listen-address", ":9660", "Address on which to expose metrics and web interface.")
 	b.MetricsPath = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
 
@@ -67,6 +69,12 @@ func (b *BillingCollector) parseFlags() {
 
 func (b *BillingCollector) Run() {
 	b.parseFlags()
+
+	if b.LogLevel != nil {
+		if err := log.Base().SetLevel(*b.LogLevel); err != nil {
+			log.Errorf("error setting log level: %s", err)
+		}
+	}
 
 	if *b.ShowVersion {
 		fmt.Fprintln(os.Stdout, version.Print(AppName))
