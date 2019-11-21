@@ -43,7 +43,7 @@ func Test_FilterLastTwoMonths(t *testing.T) {
 
 	fakeTime := &fakeClock{}
 	g := GCPBilling{
-		time:         fakeTime,
+		clock:        fakeTime,
 		ReportPrefix: "prefix",
 	}
 

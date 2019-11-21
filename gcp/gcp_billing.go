@@ -55,7 +55,7 @@ type gcpBillingReport struct {
 }
 
 type GCPBilling struct {
-	time         Clock
+	clock        Clock
 	BucketName   string
 	ReportPrefix string
 
@@ -65,20 +65,22 @@ type GCPBilling struct {
 
 	MetricMonthlyCosts *prometheus.CounterVec
 	metricValues       map[string]float64
+	resourcesMetadata  *resourcesMetadata
 }
 
-func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix string) *GCPBilling {
+func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix, ownerLabel string) *GCPBilling {
 	return &GCPBilling{
 		MetricMonthlyCosts: metric,
 		BucketName:         bucketName,
 		ReportPrefix:       reportPrefix,
-		time:               realClock{},
+		resourcesMetadata:  newResourcesMetadata().WithOwnerLabel(ownerLabel),
+		clock:              realClock{},
 		metricValues:       map[string]float64{},
 	}
 }
 
 func (g *GCPBilling) filterLastTwoMonths() []string {
-	now := g.time.Now()
+	now := g.clock.Now()
 	currentYear, currentMonth, _ := now.Date()
 
 	lastMonth := currentMonth - 1
@@ -301,6 +303,11 @@ func (g *GCPBilling) Query() error {
 		return err
 	}
 
+	// update metadata if neccessary
+	if err := g.resourcesMetadata.update(ctx); err != nil {
+		log.Warnf("error updating resource metadata: %s", err)
+	}
+
 	// gather all costs
 	elems := []*gcpBillingElement{}
 	for _, report := range g.Reports {
@@ -312,11 +319,20 @@ func (g *GCPBilling) Query() error {
 
 	// write them into the metrics
 	for _, elem := range elems {
+		var owner, path string
+		metadata := g.resourcesMetadata.projectByID(elem.ProjectID)
+		if metadata != nil {
+			owner = metadata.owner
+			path = strings.Join(g.resourcesMetadata.path(metadata), "/")
+		}
+
 		m := g.MetricMonthlyCosts.WithLabelValues(
 			"gcp",
 			elem.Cost.Currency,
 			elem.ProjectID,
 			elem.GetServiceName(),
+			path,
+			owner,
 		)
 		key := groupByProjectIDServiceCurrency(elem)
 		if _, ok := g.metricValues[key]; !ok {
