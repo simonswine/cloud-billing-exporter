@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -37,8 +38,28 @@ type awsBillingElement struct {
 	Currency    string
 }
 
-type AccountName string
-type AccountID string
+const (
+	AccountTypeProject AccountType = iota
+	AccountTypeOrganizationUnit
+	AccountTypeOrganization
+)
+
+type Account struct {
+	ID     AccountID
+	Name   AccountName
+	Owner  AccountOwner
+	Parent AccountID
+	Path   AccountPath
+	Type   AccountType
+}
+
+type (
+	AccountID    string
+	AccountName  string
+	AccountOwner string
+	AccountPath  string
+	AccountType  int
+)
 
 type AWSBilling struct {
 	time Clock
@@ -46,12 +67,15 @@ type AWSBilling struct {
 	BucketName string
 	Region     string
 
+	OwnerTag     string
+	ProjectIDTag string
+
 	// accountNameByIDOverride contains account name mappings specified
 	// manually through CLI arguments (take precedence)
 	accountNameByIDOverride map[AccountID]AccountName
 
 	// accountNameByIDCachedAPI contains account name mappings specified
-	accountNameByIDAPI           map[AccountID]AccountName
+	accountNameByIDAPI           map[AccountID]*Account
 	accountNameByIDAPILastUpdate time.Time
 	accountNameByIDAPILock       sync.Mutex
 
@@ -146,7 +170,7 @@ func groupByProjectIDServiceCurrency(e *awsBillingElement) string {
 	)
 }
 
-func NewAWSBilling(metric *prometheus.CounterVec, bucketName, region, rootAccountID, accountMapString string) *AWSBilling {
+func NewAWSBilling(metric *prometheus.CounterVec, bucketName, region, rootAccountID, accountMapString, ownerTag, projectIDTag string) *AWSBilling {
 	accountMap := map[AccountID]AccountName{}
 	accountMapParts := strings.Split(accountMapString, ",")
 	for _, mapping := range accountMapParts {
@@ -157,12 +181,16 @@ func NewAWSBilling(metric *prometheus.CounterVec, bucketName, region, rootAccoun
 		accountMap[AccountID(mappingParts[0])] = AccountName(mappingParts[1])
 	}
 
-	log.Infof("%+#v from '%s'", accountMap, accountMapString)
+	for id, name := range accountMap {
+		log.With("account_id", id).With("account_name", name).Debug("manual account mapping set up")
+	}
 
 	return &AWSBilling{
 		MetricMonthlyCosts:      metric,
 		BucketName:              bucketName,
 		Region:                  region,
+		OwnerTag:                ownerTag,
+		ProjectIDTag:            projectIDTag,
 		rootAccountID:           rootAccountID,
 		metricValues:            map[string]float64{},
 		accountNameByIDOverride: accountMap,
@@ -170,41 +198,140 @@ func NewAWSBilling(metric *prometheus.CounterVec, bucketName, region, rootAccoun
 	}
 }
 
-func (a *AWSBilling) getAccountNameByIDAPI() (map[AccountID]AccountName, error) {
-	svc := organizations.New(a.awsSession(), a.awsConfig())
-
-	accountMap := map[AccountID]AccountName{}
-
-	input := &organizations.ListAccountsInput{}
-	for {
-		resp, err := svc.ListAccounts(input)
-		if err != nil {
-			return nil, err
-		}
-		for _, account := range resp.Accounts {
-			accountMap[AccountID(*account.Id)] = AccountName(*account.Name)
-		}
-		if resp.NextToken == nil || *resp.NextToken == "" {
-			break
-		}
-		input.NextToken = resp.NextToken
+func (a *AWSBilling) getAccountPath(ctx context.Context, svc *organizations.Organizations, ac *Account, accountMap map[AccountID]*Account) ([]string, error) {
+	// we are at the root
+	if ac.Type == AccountTypeOrganization {
+		return []string{}, nil
 	}
 
-	log.Infof("%+#v from AWS api", accountMap)
+	// if no parent is known find one through API
+	if ac.Parent == "" {
+		resp, err := svc.ListParentsWithContext(ctx, &organizations.ListParentsInput{ChildId: aws.String(string(ac.ID))})
+		if err != nil {
+			return nil, fmt.Errorf("error listing parents of %s: %s", ac.ID, err)
+		}
+		if len(resp.Parents) == 0 {
+			return []string{}, nil
+		}
+		if len(resp.Parents) != 1 {
+			return nil, fmt.Errorf("expected only a single parent %+v", resp.Parents)
+		}
+		ac.Parent = AccountID(*resp.Parents[0].Id)
+	}
+
+	// check if parent is already existing
+	parent, ok := accountMap[ac.Parent]
+	if !ok {
+		parent = &Account{ID: ac.Parent}
+		if strings.HasPrefix(string(ac.Parent), "r-") {
+			resp, err := svc.DescribeOrganizationWithContext(ctx, &organizations.DescribeOrganizationInput{})
+			if err != nil {
+				return nil, err
+			}
+			parent.Type = AccountTypeOrganization
+			parent.Name = AccountName(strings.Split(*resp.Organization.MasterAccountEmail, "@")[1])
+		} else if strings.HasPrefix(string(ac.Parent), "ou-") {
+			parent.Type = AccountTypeOrganizationUnit
+			resp, err := svc.DescribeOrganizationalUnitWithContext(ctx, &organizations.DescribeOrganizationalUnitInput{OrganizationalUnitId: aws.String(string(ac.Parent))})
+			if err != nil {
+				return nil, err
+			}
+			parent.ID = AccountID(*resp.OrganizationalUnit.Id)
+			parent.Name = AccountName(*resp.OrganizationalUnit.Name)
+			parent.Type = AccountTypeOrganizationUnit
+		} else {
+			return nil, fmt.Errorf("unkown parent id: %s", ac.Parent)
+		}
+		accountMap[parent.ID] = parent
+	}
+
+	result, err := a.getAccountPath(ctx, svc, parent, accountMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(result, string(parent.Name)), nil
+
+	/*
+		if err := svc.ListParentsPages(ctx, &organizations.ListParentsInput{}, func(resp *organizations.ListParentsOutput, _ bool) bool {
+			for _, parent := range resp.Parents{
+			}
+			return true
+		}
+		}); err != nil {
+			log.Warnf("error finding parent for project %s: %s", ac.ID, err)
+		}
+	*/
+
+}
+
+func (a *AWSBilling) getAccountNameByIDAPI(ctx context.Context) (map[AccountID]*Account, error) {
+	session, err := a.awsSession()
+	if err != nil {
+		return nil, err
+	}
+	svc := organizations.New(session, a.awsConfig())
+
+	accountMap := make(map[AccountID]*Account)
+
+	if err := svc.ListAccountsPagesWithContext(ctx, &organizations.ListAccountsInput{}, func(resp *organizations.ListAccountsOutput, _ bool) bool {
+		for _, account := range resp.Accounts {
+			ac := &Account{
+				ID:   AccountID(*account.Id),
+				Name: AccountName(*account.Name),
+			}
+
+			// resolve tags
+			if err := svc.ListTagsForResourcePagesWithContext(ctx, &organizations.ListTagsForResourceInput{ResourceId: aws.String(*account.Id)}, func(resp *organizations.ListTagsForResourceOutput, _ bool) bool {
+				for _, tag := range resp.Tags {
+					if *tag.Key == a.ProjectIDTag {
+						ac.Name = AccountName(*tag.Value)
+					}
+					if *tag.Key == a.OwnerTag {
+						ac.Owner = AccountOwner(*tag.Value)
+					}
+				}
+				return true
+			}); err != nil {
+				log.Warnf("error listing tags for project %s: %s", ac.ID, err)
+			}
+
+			// find position in the organization
+			if path, err := a.getAccountPath(ctx, svc, ac, accountMap); err != nil {
+				log.Warnf("error building account path for project %s: %s", ac.ID, err)
+			} else {
+				ac.Path = AccountPath(strings.Join(path, "/"))
+			}
+			accountMap[ac.ID] = ac
+		}
+		return true
+	}); err != nil {
+		return nil, fmt.Errorf("error listing project in organization: %s", err)
+	}
+
+	for key, value := range accountMap {
+		if value.Type != AccountTypeProject {
+			continue
+		}
+		log.With("account_id", key).
+			With("account_name", value.Name).
+			With("owner", value.Owner).
+			With("path", value.Path).
+			Debug("account mapping from organizations API")
+	}
 
 	return accountMap, nil
 }
 
-func (a *AWSBilling) AccountNameByID(id AccountID) AccountName {
+func (a *AWSBilling) AccountByID(id AccountID) *Account {
+	ctx := context.Background()
 
-	// see if an override has been defined
-	if val, ok := a.accountNameByIDOverride[id]; ok {
-		return val
-	}
+	a.accountNameByIDAPILock.Lock()
+	defer a.accountNameByIDAPILock.Unlock()
 
 	// update cache of API based mapping
 	if a.accountNameByIDAPI == nil || a.time.Now().Add(-time.Hour).After(a.accountNameByIDAPILastUpdate) {
-		if m, err := a.getAccountNameByIDAPI(); err != nil {
+		if m, err := a.getAccountNameByIDAPI(ctx); err != nil {
 			log.Warnf("couldn't retrieve list of accounts: %s", err)
 		} else {
 			a.accountNameByIDAPI = m
@@ -212,31 +339,51 @@ func (a *AWSBilling) AccountNameByID(id AccountID) AccountName {
 		}
 	}
 
+	var account *Account
+
 	// check if we have an API based account name
 	if val, ok := a.accountNameByIDAPI[id]; ok {
-		return val
+		account = val
 	}
 
-	return AccountName(fmt.Sprintf("unknown-%s", id))
+	// see if an override has been defined
+	if val, ok := a.accountNameByIDOverride[id]; ok {
+		if account == nil {
+			account = &Account{ID: AccountID(id)}
+		}
+		account.Name = val
+	}
+
+	if account == nil {
+		return &Account{
+			ID:   AccountID(id),
+			Name: AccountName(fmt.Sprintf("unknown-%s", id)),
+		}
+	}
+
+	return account
 }
 
-func (a *AWSBilling) RootAccountID() string {
+func (a *AWSBilling) RootAccountID(ctx context.Context) (string, error) {
 	if a.rootAccountID != "" {
-		return a.rootAccountID
+		return a.rootAccountID, nil
 	}
 
-	svc := sts.New(a.awsSession(), a.awsConfig())
-
-	ci, err := svc.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+	session, err := a.awsSession()
 	if err != nil {
-		log.Warnf("Error detecting account ID: %s", err)
-		return ""
+		return "", err
 	}
-	return *ci.Account
+	svc := sts.New(session, a.awsConfig())
+
+	ci, err := svc.GetCallerIdentityWithContext(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return "", err
+	}
+	return *ci.Account, nil
 }
 
-func (a *AWSBilling) awsSession() *session.Session {
-	return session.New()
+func (a *AWSBilling) awsSession() (*session.Session, error) {
+	return session.NewSession()
 }
 
 func (a *AWSBilling) awsConfig() *aws.Config {
@@ -244,30 +391,41 @@ func (a *AWSBilling) awsConfig() *aws.Config {
 }
 
 func (a *AWSBilling) Query() error {
-	svc := s3.New(a.awsSession(), a.awsConfig())
+	ctx := context.Background()
 
-	prefix := fmt.Sprintf("%s-aws-billing-csv-", a.RootAccountID())
+	session, err := a.awsSession()
+	if err != nil {
+		return err
+	}
+	svc := s3.New(session, a.awsConfig())
+
+	rootAccountID, err := a.RootAccountID(ctx)
+	if err != nil {
+		return fmt.Errorf("Error detecting root account ID: %s", err)
+	}
+
+	prefix := fmt.Sprintf("%s-aws-billing-csv-", rootAccountID)
 	params := &s3.ListObjectsInput{
 		Bucket: aws.String(a.BucketName),
 		Prefix: aws.String(prefix),
 	}
 
-	resp, err := svc.ListObjects(params)
-	if err != nil {
+	var billingObject *s3.Object
+	if err := svc.ListObjectsPagesWithContext(ctx, params, func(resp *s3.ListObjectsOutput, _ bool) bool {
+		for _, object := range resp.Contents {
+			key := *object.Key
+			log.Debugf("found report '%s' for '%s'", key, key[len(prefix):len(key)-4])
+			if billingObject == nil || strings.Compare(key, *billingObject.Key) > 0 {
+				billingObject = object
+			}
+		}
+		return true
+	}); err != nil {
 		return fmt.Errorf("Error listing AWS bucket: %s", err)
 	}
 
-	var billingObject *s3.Object
-	for _, object := range resp.Contents {
-		key := *object.Key
-		log.Debugf("found report '%s' for '%s'", key, key[len(prefix):len(key)-4])
-		if billingObject == nil || strings.Compare(key, *billingObject.Key) > 0 {
-			billingObject = object
-		}
-	}
-
 	if billingObject == nil {
-		return fmt.Errorf("No billing report for account '%s' found in bucket '%s'", a.RootAccountID(), a.BucketName)
+		return fmt.Errorf("No billing report for account '%s' found in bucket '%s'", rootAccountID, a.BucketName)
 	}
 
 	key := *billingObject.Key
@@ -302,14 +460,16 @@ func (a *AWSBilling) Query() error {
 
 	for _, elem := range billingElements {
 		projectID := elem.ProjectID
-		projectID = string(a.AccountNameByID(AccountID(projectID)))
+		project := a.AccountByID(AccountID(projectID))
 		elem.ProjectName = projectID
 
 		m := a.MetricMonthlyCosts.WithLabelValues(
 			"aws",
 			elem.Currency,
-			projectID,
+			string(project.Name),
 			elem.ServiceName,
+			string(project.Path),
+			string(project.Owner),
 		)
 		key := groupByProjectIDServiceCurrency(elem)
 		if _, ok := a.metricValues[key]; !ok {
@@ -329,5 +489,10 @@ func (a *AWSBilling) Test() error {
 }
 
 func (a *AWSBilling) String() string {
-	return fmt.Sprintf("AWS Billing on root account '%s' in bucket '%s'", a.RootAccountID(), a.BucketName)
+	rootAccountID, err := a.RootAccountID(context.Background())
+	if err != nil {
+		rootAccountID = "unknown"
+	}
+
+	return fmt.Sprintf("AWS Billing on root account '%s' in bucket '%s'", rootAccountID, a.BucketName)
 }

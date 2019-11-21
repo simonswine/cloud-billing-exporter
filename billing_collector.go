@@ -27,13 +27,13 @@ type cloudBillingCollector interface {
 }
 
 type BillingCollector struct {
-	awsBilling       *aws.AWSBilling
 	AWSRegion        *string
 	AWSBucketName    *string
 	AWSRootAccountID *int
 	AWSAccountMap    *string
+	AWSOwnerTag      *string
+	AWSProjectIDTag  *string
 
-	gcpBilling      *gcp.GCPBilling
 	GCPReportPrefix *string
 	GCPBucketName   *string
 	GCPOwnerLabel   *string
@@ -55,6 +55,8 @@ func (b *BillingCollector) parseFlags() {
 	b.AWSBucketName = flag.String("aws-billing.bucket-name", "", "Bucket name that stores AWS billing reports.")
 	b.AWSRootAccountID = flag.Int("aws-billing.root-account-id", 0, "Root Account ID.")
 	b.AWSAccountMap = flag.String("aws-billing.account-map", "", "Map account IDs to more readable names. Example: 1200000=acme-dev,120001=acme-prod")
+	b.AWSProjectIDTag = flag.String("aws-billing.project-id-tag", "project-id", "Tag on AWS Projects to override Project Name.")
+	b.AWSOwnerTag = flag.String("aws-billing.owner-tag", "owner", "Tag on AWS Projects to set owner.")
 
 	b.ShowVersion = flag.Bool("version", false, "Print version information.")
 	b.ListenAddress = flag.String("web.listen-address", ":9660", "Address on which to expose metrics and web interface.")
@@ -93,6 +95,8 @@ func (b *BillingCollector) Run() {
 			*b.AWSRegion,
 			rootAccountID,
 			*b.AWSAccountMap,
+			*b.AWSOwnerTag,
+			*b.AWSProjectIDTag,
 		)
 		if err := c.Test(); err != nil {
 			log.Error(err)
@@ -130,13 +134,16 @@ func (b *BillingCollector) Run() {
 		})
 	http.Handle(*b.MetricsPath, handler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+		if _, err := w.Write([]byte(`<html>
 			<head><title>` + AppNameLong + `</title></head>
 			<body>
 			<h1>` + AppNameLong + `</h1>
 			<p><a href="` + *b.MetricsPath + `">Metrics</a></p>
 			</body>
-			</html>`))
+			</html>`)); err != nil {
+			log.Warnf("error writing http repsonse: %s", err)
+		}
+
 	})
 
 	log.Infoln("Listening on", *b.ListenAddress)
