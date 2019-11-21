@@ -27,19 +27,21 @@ type cloudBillingCollector interface {
 }
 
 type BillingCollector struct {
-	awsBilling       *aws.AWSBilling
 	AWSRegion        *string
 	AWSBucketName    *string
 	AWSRootAccountID *int
 	AWSAccountMap    *string
+	AWSOwnerTag      *string
+	AWSProjectIDTag  *string
 
-	gcpBilling      *gcp.GCPBilling
 	GCPReportPrefix *string
 	GCPBucketName   *string
+	GCPOwnerLabel   *string
 
 	ShowVersion   *bool
 	ListenAddress *string
 	MetricsPath   *string
+	LogLevel      *string
 
 	collectors         []cloudBillingCollector
 	metricMonthlyCosts *prometheus.CounterVec
@@ -48,13 +50,17 @@ type BillingCollector struct {
 func (b *BillingCollector) parseFlags() {
 	b.GCPReportPrefix = flag.String("gcp-billing.report-prefix", "my-billing", "Report name prefix for GCP billing.")
 	b.GCPBucketName = flag.String("gcp-billing.bucket-name", "", "Bucket name that stores GCP JSON billing reports.")
+	b.GCPOwnerLabel = flag.String("gcp-billing.owner-label", "owner-base32", "Name of the owner label, which contains the owner in base32 encoding.")
 
 	b.AWSRegion = flag.String("aws-billing.region", "eu-west-1", "Region name for AWS billing bucket.")
 	b.AWSBucketName = flag.String("aws-billing.bucket-name", "", "Bucket name that stores AWS billing reports.")
 	b.AWSRootAccountID = flag.Int("aws-billing.root-account-id", 0, "Root Account ID.")
 	b.AWSAccountMap = flag.String("aws-billing.account-map", "", "Map account IDs to more readable names. Example: 1200000=acme-dev,120001=acme-prod")
+	b.AWSProjectIDTag = flag.String("aws-billing.project-id-tag", "project-id", "Tag on AWS Projects to override Project Name.")
+	b.AWSOwnerTag = flag.String("aws-billing.owner-tag", "owner", "Tag on AWS Projects to set owner.")
 
 	b.ShowVersion = flag.Bool("version", false, "Print version information.")
+	b.LogLevel = flag.String("log-level", "info", "Set log level.")
 	b.ListenAddress = flag.String("web.listen-address", ":9660", "Address on which to expose metrics and web interface.")
 	b.MetricsPath = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
 
@@ -63,6 +69,12 @@ func (b *BillingCollector) parseFlags() {
 
 func (b *BillingCollector) Run() {
 	b.parseFlags()
+
+	if b.LogLevel != nil {
+		if err := log.Base().SetLevel(*b.LogLevel); err != nil {
+			log.Errorf("error setting log level: %s", err)
+		}
+	}
 
 	if *b.ShowVersion {
 		fmt.Fprintln(os.Stdout, version.Print(AppName))
@@ -77,7 +89,7 @@ func (b *BillingCollector) Run() {
 			Name: prometheus.BuildFQName(Namespace, "billing", "monthly_costs"),
 			Help: "Billed costs per calendar month.",
 		},
-		[]string{"cloud", "currency", "account", "service"},
+		[]string{"cloud", "currency", "account", "service", "path", "owner"},
 	)
 
 	if *b.AWSBucketName != "" {
@@ -91,6 +103,8 @@ func (b *BillingCollector) Run() {
 			*b.AWSRegion,
 			rootAccountID,
 			*b.AWSAccountMap,
+			*b.AWSOwnerTag,
+			*b.AWSProjectIDTag,
 		)
 		if err := c.Test(); err != nil {
 			log.Error(err)
@@ -104,6 +118,7 @@ func (b *BillingCollector) Run() {
 			b.metricMonthlyCosts,
 			*b.GCPBucketName,
 			*b.GCPReportPrefix,
+			*b.GCPOwnerLabel,
 		)
 		if err := c.Test(); err != nil {
 			log.Error(err)
@@ -125,15 +140,18 @@ func (b *BillingCollector) Run() {
 			ErrorLog:      log.NewErrorLogger(),
 			ErrorHandling: promhttp.ContinueOnError,
 		})
-	http.Handle(*b.MetricsPath, prometheus.InstrumentHandler("prometheus", handler))
+	http.Handle(*b.MetricsPath, handler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+		if _, err := w.Write([]byte(`<html>
 			<head><title>` + AppNameLong + `</title></head>
 			<body>
 			<h1>` + AppNameLong + `</h1>
 			<p><a href="` + *b.MetricsPath + `">Metrics</a></p>
 			</body>
-			</html>`))
+			</html>`)); err != nil {
+			log.Warnf("error writing http repsonse: %s", err)
+		}
+
 	})
 
 	log.Infoln("Listening on", *b.ListenAddress)
