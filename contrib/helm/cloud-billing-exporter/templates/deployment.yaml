@@ -1,33 +1,89 @@
-apiVersion: extensions/v1beta1
+{{- $global := . }}
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "fullname" . }}
+  name: {{ include "cloud-billing-exporter.fullname" . }}
   labels:
-    chart: "{{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}"
+    {{- include "cloud-billing-exporter.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cloud-billing-exporter.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ template "fullname" . }}
+        {{- include "cloud-billing-exporter.selectorLabels" . | nindent 8 }}
     spec:
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      serviceAccountName: {{ include "cloud-billing-exporter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-      - name: {{ .Chart.Name }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        args:
-        - -billing.report-prefix=jetstack-billing
-        - -billing.bucket-name=jetstack-billing
-        - -log.level=debug
-        ports:
-        - containerPort: {{ .Values.service.internalPort }}
-        livenessProbe:
-          httpGet:
-            path: /
-            port: {{ .Values.service.internalPort }}
-        readinessProbe:
-          httpGet:
-            path: /
-            port: {{ .Values.service.internalPort }}
-        resources:
-{{ toYaml .Values.resources | indent 12 }}
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+          {{- range $key, $value := .Values.args }}
+            - {{ printf "--%s=%s" $key $value | quote }}
+          {{- end }}
+          env:
+          {{- range $key, $value := .Values.environment }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{- range $key, $value := .Values.environmentSecrets }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cloud-billing-exporter.fullname" $global }}
+                  key: {{ $key }}
+          {{- end }}
+          {{- if .Values.googleServiceAccount }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /run/google-service-account/service-account.json
+          volumeMounts:
+            - name: google-service-account
+              mountPath: /run/google-service-account
+              readOnly: true
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.internalPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.googleServiceAccount }}
+      volumes:
+        - name: google-service-account
+          secret:
+            secretName: {{ include "cloud-billing-exporter.fullname" . }}
+            items:
+              - key: google-service-account
+                path: service-account.json
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}

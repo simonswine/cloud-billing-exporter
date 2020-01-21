@@ -2,7 +2,7 @@ ACCOUNT=simonswine
 APP_NAME=cloud-billing-exporter
 
 PACKAGE_NAME=github.com/${ACCOUNT}/${APP_NAME}
-GO_VERSION=1.13.4
+GO_VERSION=1.13.6
 
 GOOS := linux
 GOARCH := amd64
@@ -42,16 +42,16 @@ help:  ## Display this help
 
 all: test build
 
-test:
+test: ## run golang tests
 	go test -count 1 ./...
 
-build:
+build: ## build binary
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-a -tags netgo \
 		-o ${BUILD_DIR}/${APP_NAME}-$(GOOS)-$(GOARCH) \
 		-ldflags "$(shell hack/version-ld-flags.sh)"
 
-image:
+image: build ## build image
 	docker build --build-arg VCS_REF=$(shell git rev-parse HEAD) -t $(DOCKER_IMAGE):$(BUILD_TAG) .
 	
 push: image
