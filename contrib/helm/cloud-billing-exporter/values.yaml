@@ -1,16 +1,45 @@
 # Default values for cloud-billing-exporter.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+
 replicaCount: 1
+
 image:
-  repository: jetstackexperimental/cloud-billing-exporter
-  tag: canary
-  pullPolicy: Always
+  repository: docker.io/simonswine/cloud-billing-exporter
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  # name:
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
 service:
-  name: nginx
   type: ClusterIP
-  externalPort: 9660
+  port: 80
   internalPort: 9660
+
+args:
+  gcp-billing.report-prefix: my-billing
+  gcp-billing.bucket-name: my-billing
+  log-level: info
+
 resources:
   limits:
     cpu: 100m
@@ -19,3 +48,12 @@ resources:
     cpu: 100m
     memory: 128Mi
 
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+environment: {}
+
+environmentSecrets: {}
