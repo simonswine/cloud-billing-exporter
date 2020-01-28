@@ -34,9 +34,11 @@ type BillingCollector struct {
 	AWSOwnerTag      *string
 	AWSProjectIDTag  *string
 
-	GCPReportPrefix *string
-	GCPBucketName   *string
-	GCPOwnerLabel   *string
+	gcpBilling         *gcp.GCPBilling
+	GCPReportPrefix    *string
+	GCPBucketName      *string
+	GCPOwnerLabel      *string
+	GCPBigQueryDataset *string
 
 	ShowVersion   *bool
 	ListenAddress *string
@@ -48,9 +50,10 @@ type BillingCollector struct {
 }
 
 func (b *BillingCollector) parseFlags() {
-	b.GCPReportPrefix = flag.String("gcp-billing.report-prefix", "my-billing", "Report name prefix for GCP billing.")
+	b.GCPReportPrefix = flag.String("gcp-billing.report-prefix", "my-billing", "Report name prefix for GCP billing retrieved from Buckets.")
 	b.GCPBucketName = flag.String("gcp-billing.bucket-name", "", "Bucket name that stores GCP JSON billing reports.")
 	b.GCPOwnerLabel = flag.String("gcp-billing.owner-label", "owner-base32", "Name of the owner label, which contains the owner in base32 encoding.")
+	b.GCPBigQueryDataset = flag.String("gcp-billing.big-query-dataset", "", "BigQuery dataset with GCP billing reports in this format: <project>.<dataset>.<table>")
 
 	b.AWSRegion = flag.String("aws-billing.region", "eu-west-1", "Region name for AWS billing bucket.")
 	b.AWSBucketName = flag.String("aws-billing.bucket-name", "", "Bucket name that stores AWS billing reports.")
@@ -114,11 +117,23 @@ func (b *BillingCollector) Run() {
 	}
 
 	if *b.GCPBucketName != "" {
-		c := gcp.NewGCPBilling(
+		c := gcp.NewGCPBillingBucket(
 			b.metricMonthlyCosts,
 			*b.GCPBucketName,
 			*b.GCPReportPrefix,
 			*b.GCPOwnerLabel,
+		)
+		if err := c.Test(); err != nil {
+			log.Error(err)
+		} else {
+			b.collectors = append(b.collectors, c)
+		}
+	}
+
+	if *b.GCPBigQueryDataset != "" {
+		c := gcp.NewGCPBillingBigQuery(
+			b.metricMonthlyCosts,
+			*b.GCPBucketName,
 		)
 		if err := c.Test(); err != nil {
 			log.Error(err)

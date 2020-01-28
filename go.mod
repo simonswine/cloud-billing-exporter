@@ -3,6 +3,7 @@ module github.com/simonswine/cloud-billing-exporter
 go 1.13
 
 require (
+	cloud.google.com/go/bigquery v1.0.1
 	cloud.google.com/go/storage v1.3.0
 	github.com/aws/aws-sdk-go v1.25.36
 	github.com/prometheus/client_golang v1.2.1
