@@ -68,12 +68,12 @@ type GCPBilling struct {
 	resourcesMetadata  *resourcesMetadata
 }
 
-func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix, ownerLabel string) *GCPBilling {
+func NewGCPBilling(metric *prometheus.CounterVec, bucketName, reportPrefix, ownerLabel string, costCentreLabel string) *GCPBilling {
 	return &GCPBilling{
 		MetricMonthlyCosts: metric,
 		BucketName:         bucketName,
 		ReportPrefix:       reportPrefix,
-		resourcesMetadata:  newResourcesMetadata().WithOwnerLabel(ownerLabel),
+		resourcesMetadata:  newResourcesMetadata().WithResourceLabels(ownerLabel, costCentreLabel),
 		clock:              realClock{},
 		metricValues:       map[string]float64{},
 	}
@@ -319,10 +319,11 @@ func (g *GCPBilling) Query() error {
 
 	// write them into the metrics
 	for _, elem := range elems {
-		var owner, path string
+		var owner, costcentre, path string
 		metadata := g.resourcesMetadata.projectByID(elem.ProjectID)
 		if metadata != nil {
 			owner = metadata.owner
+			costcentre = metadata.costCentre
 			path = strings.Join(g.resourcesMetadata.path(metadata), "/")
 		}
 
@@ -333,6 +334,7 @@ func (g *GCPBilling) Query() error {
 			elem.GetServiceName(),
 			path,
 			owner,
+			costcentre,
 		)
 		key := groupByProjectIDServiceCurrency(elem)
 		if _, ok := g.metricValues[key]; !ok {
