@@ -17,6 +17,8 @@ type resourceMetadata struct {
 	id          string
 	displayName string
 	owner       string
+	costCentre  string
+	projectType string
 	parent      string
 }
 
@@ -24,6 +26,8 @@ type resourcesMetadata struct {
 	metadataByProjectID map[string]*resourceMetadata
 	metadataByID        map[string]*resourceMetadata
 	ownerLabel          string
+	costCentreLabel     string
+	projectTypeLabel    string
 	lastUpdate          time.Time
 	updateLock          sync.Mutex
 	clock               Clock
@@ -37,8 +41,10 @@ func newResourcesMetadata() *resourcesMetadata {
 	}
 }
 
-func (r *resourcesMetadata) WithOwnerLabel(label string) *resourcesMetadata {
-	r.ownerLabel = label
+func (r *resourcesMetadata) WithResourceLabels(owner string, costCentre string, projectType string) *resourcesMetadata {
+	r.ownerLabel = owner
+	r.costCentreLabel = costCentre
+	r.projectTypeLabel = projectType
 	return r
 }
 
@@ -89,7 +95,7 @@ func (r *resourcesMetadata) update(ctx context.Context) error {
 		req := crmv1Service.Projects.List()
 		if err := req.Pages(ctx, func(page *crmv1.ListProjectsResponse) error {
 			for _, e := range page.Projects {
-				var owner string
+				var owner, costCentre, projectType string
 				if value, ok := e.Labels[r.ownerLabel]; ok {
 					value = strings.ToUpper(strings.ReplaceAll(value, "_", "="))
 					if valueDecoded, err := base32.StdEncoding.DecodeString(value); err != nil {
@@ -99,10 +105,22 @@ func (r *resourcesMetadata) update(ctx context.Context) error {
 					}
 				}
 
+				if value, ok := e.Labels[r.costCentreLabel]; ok {
+					value = strings.ToUpper(strings.ReplaceAll(value, "_", "="))
+					costCentre = strings.ToLower(value)
+				}
+
+				if value, ok := e.Labels[r.projectTypeLabel]; ok {
+					value = strings.ReplaceAll(value, "_", "=")
+					projectType = string(value)
+				}
+
 				r.ingest(&resourceMetadata{
 					id:          fmt.Sprintf("projects/%d", e.ProjectNumber),
 					displayName: e.ProjectId,
 					owner:       owner,
+					costCentre:  costCentre,
+					projectType: projectType,
 					parent:      fmt.Sprintf("%ss/%s", e.Parent.Type, e.Parent.Id),
 				})
 			}

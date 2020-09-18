@@ -34,9 +34,11 @@ type BillingCollector struct {
 	AWSOwnerTag      *string
 	AWSProjectIDTag  *string
 
-	GCPReportPrefix *string
-	GCPBucketName   *string
-	GCPOwnerLabel   *string
+	GCPReportPrefix     *string
+	GCPBucketName       *string
+	GCPOwnerLabel       *string
+	GCPCostCentreLabel  *string
+	GCPProjectTypeLabel *string
 
 	ShowVersion   *bool
 	ListenAddress *string
@@ -51,6 +53,8 @@ func (b *BillingCollector) parseFlags() {
 	b.GCPReportPrefix = flag.String("gcp-billing.report-prefix", "my-billing", "Report name prefix for GCP billing.")
 	b.GCPBucketName = flag.String("gcp-billing.bucket-name", "", "Bucket name that stores GCP JSON billing reports.")
 	b.GCPOwnerLabel = flag.String("gcp-billing.owner-label", "owner-base32", "Name of the owner label, which contains the owner in base32 encoding.")
+	b.GCPCostCentreLabel = flag.String("gcp-billing.costcentre-label", "cost_centre", "Name of the cost centre label, which contains the cost centre")
+	b.GCPProjectTypeLabel = flag.String("gcp-billing.project-type-label", "type", "Name of the type label which describes the GPC project")
 
 	b.AWSRegion = flag.String("aws-billing.region", "eu-west-1", "Region name for AWS billing bucket.")
 	b.AWSBucketName = flag.String("aws-billing.bucket-name", "", "Bucket name that stores AWS billing reports.")
@@ -89,7 +93,7 @@ func (b *BillingCollector) Run() {
 			Name: prometheus.BuildFQName(Namespace, "billing", "monthly_costs"),
 			Help: "Billed costs per calendar month.",
 		},
-		[]string{"cloud", "currency", "account", "service", "path", "owner"},
+		[]string{"cloud", "currency", "account", "service", "path", "owner", "cost_centre", "type"},
 	)
 
 	if *b.AWSBucketName != "" {
@@ -119,6 +123,8 @@ func (b *BillingCollector) Run() {
 			*b.GCPBucketName,
 			*b.GCPReportPrefix,
 			*b.GCPOwnerLabel,
+			*b.GCPCostCentreLabel,
+			*b.GCPProjectTypeLabel,
 		)
 		if err := c.Test(); err != nil {
 			log.Error(err)
